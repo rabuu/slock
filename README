@@ -22,3 +22,12 @@ Afterwards enter the following command to build and install slock
 Running slock
 -------------
 Simply invoke the 'slock' command. To get out of it, enter your password.
+
+
+edit by rabuu
+-------------
+User that uses slock has to be in slock group.
+Colors can be defined in Xresources with:
+	- slock.colorInit
+	- slock.colorInput
+	- slock.colorFailed
