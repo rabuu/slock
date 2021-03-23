@@ -43,6 +43,21 @@ enum {
 	NUMCOLS
 };
 
+/* Xresources preferences */
+enum resource_type {
+	STRING = 0,
+	INTEGER = 1,
+	FLOAT = 2
+};
+
+
+typedef struct {
+	char *name;
+	enum resource_type type;
+	void *dst;
+} ResourcePref;
+
+
 #include "config.h"
 
 struct lock {
@@ -62,19 +77,6 @@ struct xrandr {
 	int evbase;
 	int errbase;
 };
-
-/* Xresources preferences */
-enum resource_type {
-	STRING = 0,
-	INTEGER = 1,
-	FLOAT = 2
-};
-
-typedef struct {
-	char *name;
-	enum resource_type type;
-	void *dst;
-} ResourcePref;
 
 static void
 die(const char *errstr, ...)
@@ -560,11 +562,12 @@ main(int argc, char **argv) {
 		XFreeGC(dpy, locks[s]->gc);
 	}
 	XSync(dpy, 0);
-	XCloseDisplay(dpy);
+	/* XCloseDisplay(dpy); */
 
 	/* reset DPMS values to inital ones */
 	DPMSSetTimeouts(dpy, standby, suspend, off);
 	XSync(dpy, 0);
+	XCloseDisplay(dpy);
 
 	return 0;
 }
