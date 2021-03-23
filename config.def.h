@@ -7,6 +7,7 @@ static const char *colorname[NUMCOLS] = {
 	[INIT] 			= 	"black", 	/* after initialization */
 	[INPUT] 		= 	"grey", 	/* during input */
 	[FAILED] 		= 	"red", 		/* wrong password */
+	[CAPS] 			= 	"white",	/* CapsLock on */
 };
 
 /* treat a cleared input like a wrong password (color) */
@@ -45,4 +46,5 @@ ResourcePref resources[] = {
 		{ "colorInit", 			STRING,  &colorname[INIT] },
 		{ "colorInput",     	STRING,  &colorname[INPUT] },
 		{ "colorFailed", 	    STRING,  &colorname[FAILED] },
+		{ "colorCaps",  	    STRING,  &colorname[CAPS] },
 };
