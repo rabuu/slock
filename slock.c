@@ -1,5 +1,6 @@
 /* See LICENSE file for license details. */
-#define _XOPEN_SOURCE 500
+#define _XOPEN_SOURCE   500
+#define LENGTH(X)       (sizeof X / sizeof X[0])
 #if HAVE_SHADOW_H
 #include <shadow.h>
 #endif
@@ -17,10 +18,14 @@
 #include <time.h>
 #include <sys/types.h>
 #include <X11/extensions/Xrandr.h>
+#ifdef XINERAMA
+#include <X11/extensions/Xinerama.h>
+#endif
 #include <X11/extensions/dpms.h>
 #include <X11/keysym.h>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#include <X11/Xft/Xft.h>
 #include <X11/Xresource.h>
 
 #include "arg.h"
@@ -31,17 +36,25 @@ char *argv0;
 static time_t locktime;
 
 enum {
+	BACKGROUND,
 	INIT,
 	INPUT,
 	FAILED,
 	NUMCOLS
 };
 
+#include "config.h"
+
 struct lock {
 	int screen;
 	Window root, win;
 	Pixmap pmap;
 	unsigned long colors[NUMCOLS];
+	unsigned int x, y;
+	unsigned int xoff, yoff, mw, mh;
+	Drawable drawable;
+	GC gc;
+	XRectangle rectangles[LENGTH(rectangles)];
 };
 
 struct xrandr {
@@ -62,8 +75,6 @@ typedef struct {
 	enum resource_type type;
 	void *dst;
 } ResourcePref;
-
-#include "config.h"
 
 static void
 die(const char *errstr, ...)
@@ -141,6 +152,32 @@ gethash(void)
 #endif /* HAVE_SHADOW_H */
 
 	return hash;
+}
+
+static void
+resizerectangles(struct lock *lock)
+{
+	int i;
+
+	for (i = 0; i < LENGTH(rectangles); i++){
+		lock->rectangles[i].x = (rectangles[i].x * logosize)
+                                + lock->xoff + ((lock->mw) / 2) - (logow / 2 * logosize);
+		lock->rectangles[i].y = (rectangles[i].y * logosize)
+                                + lock->yoff + ((lock->mh) / 2) - (logoh / 2 * logosize);
+		lock->rectangles[i].width = rectangles[i].width * logosize;
+		lock->rectangles[i].height = rectangles[i].height * logosize;
+	}
+}
+
+static void
+drawlogo(Display *dpy, struct lock *lock, int color)
+{
+	XSetForeground(dpy, lock->gc, lock->colors[BACKGROUND]);
+	XFillRectangle(dpy, lock->drawable, lock->gc, 0, 0, lock->x, lock->y);
+	XSetForeground(dpy, lock->gc, lock->colors[color]);
+	XFillRectangles(dpy, lock->drawable, lock->gc, lock->rectangles, LENGTH(rectangles));
+	XCopyArea(dpy, lock->drawable, lock->win, lock->gc, 0, 0, lock->x, lock->y, 0, 0);
+	XSync(dpy, False);
 }
 
 static void
@@ -226,10 +263,7 @@ readpw(Display *dpy, struct xrandr *rr, struct lock **locks, int nscreens,
 			color = len ? INPUT : ((failure || failonclear) ? FAILED : INIT);
 			if (running && oldc != color) {
 				for (screen = 0; screen < nscreens; screen++) {
-					XSetWindowBackground(dpy,
-					                     locks[screen]->win,
-					                     locks[screen]->colors[color]);
-					XClearWindow(dpy, locks[screen]->win);
+					drawlogo(dpy, locks[screen], color);
 				}
 				oldc = color;
 			}
@@ -264,6 +298,10 @@ lockscreen(Display *dpy, struct xrandr *rr, int screen)
 	XColor color, dummy;
 	XSetWindowAttributes wa;
 	Cursor invisible;
+#ifdef XINERAMA
+	XineramaScreenInfo *info;
+	int n;
+#endif
 
 	if (dpy == NULL || screen < 0 || !(lock = malloc(sizeof(struct lock))))
 		return NULL;
@@ -277,12 +315,31 @@ lockscreen(Display *dpy, struct xrandr *rr, int screen)
 		lock->colors[i] = color.pixel;
 	}
 
+	lock->x = DisplayWidth(dpy, lock->screen);
+	lock->y = DisplayHeight(dpy, lock->screen);
+#ifdef XINERAMA
+	if ((info = XineramaQueryScreens(dpy, &n))) {
+		lock->xoff = info[0].x_org;
+		lock->yoff = info[0].y_org;
+		lock->mw = info[0].width;
+		lock->mh = info[0].height;
+	} else
+#endif
+	{
+		lock->xoff = lock->yoff = 0;
+		lock->mw = lock->x;
+		lock->mh = lock->y;
+	}
+	lock->drawable = XCreatePixmap(dpy, lock->root,
+            lock->x, lock->y, DefaultDepth(dpy, screen));
+	lock->gc = XCreateGC(dpy, lock->root, 0, NULL);
+	XSetLineAttributes(dpy, lock->gc, 1, LineSolid, CapButt, JoinMiter);
+
 	/* init */
 	wa.override_redirect = 1;
-	wa.background_pixel = lock->colors[INIT];
+	wa.background_pixel = lock->colors[BACKGROUND];
 	lock->win = XCreateWindow(dpy, lock->root, 0, 0,
-	                          DisplayWidth(dpy, lock->screen),
-	                          DisplayHeight(dpy, lock->screen),
+	                          lock->x, lock->y,
 	                          0, DefaultDepth(dpy, lock->screen),
 	                          CopyFromParent,
 	                          DefaultVisual(dpy, lock->screen),
@@ -291,6 +348,8 @@ lockscreen(Display *dpy, struct xrandr *rr, int screen)
 	invisible = XCreatePixmapCursor(dpy, lock->pmap, lock->pmap,
 	                                &color, &color, 0, 0);
 	XDefineCursor(dpy, lock->win, invisible);
+
+	resizerectangles(lock);
 
 	/* Try to grab mouse pointer *and* keyboard for 600ms, else fail the lock */
 	for (i = 0, ptgrab = kbgrab = -1; i < 6; i++) {
@@ -312,6 +371,7 @@ lockscreen(Display *dpy, struct xrandr *rr, int screen)
 				XRRSelectInput(dpy, lock->win, RRScreenChangeNotifyMask);
 
 			XSelectInput(dpy, lock->root, SubstructureNotifyMask);
+			drawlogo(dpy, lock, INIT);
 			locktime = time(NULL);
 			return lock;
 		}
@@ -495,6 +555,12 @@ main(int argc, char **argv) {
 
 	/* everything is now blank. Wait for the correct password */
 	readpw(dpy, &rr, locks, nscreens, hash);
+	for (nlocks = 0, s = 0; s < nscreens; s++) {
+		XFreePixmap(dpy, locks[s]->drawable);
+		XFreeGC(dpy, locks[s]->gc);
+	}
+	XSync(dpy, 0);
+	XCloseDisplay(dpy);
 
 	/* reset DPMS values to inital ones */
 	DPMSSetTimeouts(dpy, standby, suspend, off);
